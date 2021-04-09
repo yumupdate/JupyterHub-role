@@ -1,0 +1,23 @@
+---
+# vars file for JupyterHub-role
+script:
+  src: script.sh
+  dest: /home/jh/jh-deploy.sh
+  owner: jh
+  group: jh
+service:
+  src: jupyterhub.service
+  dest: /opt/jupyterhub/etc/systemd/
+  owner: jh
+  group: jh
+nginx_vconf:
+  src: jupytherhub.conf
+  dest: /etc/nginx/conf.d/
+  owner: root
+  group: root
+nginx_conf:
+  src: nginx.conf
+  dest: /etc/nginx/
+  owner: root
+  group: root
+jh_password: jh

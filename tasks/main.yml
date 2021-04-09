@@ -1,0 +1,156 @@
+---
+# tasks file for JupyterHub-role
+- name: Include vars for tasks
+  include_vars:
+    file: "main.yml"
+
+- name: Set hostname
+  command: hostnamectl set-hostname "{{ inventory_hostname }}"
+  when: ansible_facts.fqdn != inventory_hostname
+
+- name: Disable SElinux
+  selinux:
+    state: disabled
+
+- name: Ensure SELinux is set to enforcing mode
+  lineinfile:
+    path: /etc/selinux/config
+    regexp: '^SELINUX='
+    line: SELINUX=disabled
+
+- name: Disable firewalld
+  service:
+    name: firewalld
+    state: stopped
+    enabled: false
+
+- name: Creating group
+  group:
+    name: jh
+    state: present
+
+- name: Add user for JH
+  user:
+    name: jh
+    password: "{{ jh_password | password_hash('sha512') }}"
+    state: present
+    group: jh
+
+- name: Add jh user to sudoers
+  copy:
+    content: JH ALL=(ALL) NOPASSWD:ALL
+    dest: /etc/sudoers.d/jh
+    owner: root
+
+- name: Install epel-release
+  yum:
+    name: epel-release
+    state: latest
+
+- name: Create needed dirs
+  file:
+    path: "{{ item }}"
+    owner: root
+    group: root
+    mode: 0775
+    state: directory
+  loop:
+    - /opt/jupyterhub/etc/jupyterhub/
+    - /opt/jupyterhub/etc/systemd
+
+- name: Install additional packages after epel-release
+  yum:
+    name:
+      - python-setuptools
+      - python3
+      - postgresql*-server
+      - nginx
+      - nodejs
+      - npm
+      - conda
+
+- name: Copy files
+  copy:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    owner: "{{ item.owner }}"
+    group: "{{ item.group }}"
+    mode: 0774
+  loop:
+    - "{{ script }}"
+    - "{{ service }}"
+    - "{{ nginx_conf }}"
+    - "{{ nginx_vconf }}"
+
+
+- name: Link jupyterhub service unit
+  file:
+    src: /opt/jupyterhub/etc/systemd/jupyterhub.service
+    dest: /etc/systemd/system/jupyterhub.service
+    state: link
+
+- name: Creating python venv & upgrading PIP in python venv
+  pip:
+    virtualenv: /opt/jupyterhub/
+    virtualenv_command: /usr/bin/python3 -m venv
+    state: latest
+    extra_args: "--upgrade"
+    name: pip
+
+- name: Installing required packages for python venv
+  pip:
+    virtualenv: /opt/jupyterhub/
+    state: latest
+    name: "{{ item }}"
+  loop:
+    - wheel
+    - cryptography
+    - ipywidgets
+
+- name: Installing JupyterHUB in python venv
+  pip:
+    virtualenv: /opt/jupyterhub/
+    state: latest
+    name:
+      - jupyterhub
+      - jupyterlab
+
+- name: NPM install configurable-http-proxy
+  npm:
+    path: /usr/lib/node_modules
+    name: configurable-http-proxy
+    state: latest
+
+- name: Check for JupyterHub config
+  stat:
+    path: /opt/jupyterhub/etc/jupyterhub/jupyterhub_config.py
+  register: config
+
+- name: Generate config for JupyterHub
+  command:
+    chdir: /opt/jupyterhub/etc/jupyterhub/
+    cmd: /opt/jupyterhub/bin/jupyterhub --generate-config
+  when: config.stat.exists == False
+
+- name: Configure JH default dir
+  lineinfile:
+    path: /opt/jupyterhub/etc/jupyterhub/jupyterhub_config.py
+    insertafter: "#c.Spawner.default_url = ''"
+    line: "c.Spawner.default_url = '/lab'"
+
+- name: Configure JH for reverse proxy
+  lineinfile:
+    path: /opt/jupyterhub/etc/jupyterhub/jupyterhub_config.py
+    insertafter: "#c.JupyterHub.bind_url = 'http://:8000'"
+    line: "c.JupyterHub.bind_url = 'http://:8000/jupyter'"
+
+
+- name: Enable and start nginx & jupyterhub
+  service:
+    name: "{{ item }}"
+    state: started
+    enabled: true
+  loop:
+    - nginx
+    - jupyterhub
+ 
